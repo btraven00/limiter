@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -78,6 +80,28 @@ Examples:
 `, limitsConfigPath)
 }
 
+// getOOMKillCount reads the oom_kill counter from the user's cgroup memory.events
+func getOOMKillCount() int {
+	uid := os.Getuid()
+	eventsPath := fmt.Sprintf("/sys/fs/cgroup/user.slice/user-%d.slice/user@%d.service/memory.events", uid, uid)
+
+	data, err := os.ReadFile(eventsPath)
+	if err != nil {
+		return -1
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "oom_kill ") {
+			parts := strings.Fields(line)
+			if len(parts) == 2 {
+				count, _ := strconv.Atoi(parts[1])
+				return count
+			}
+		}
+	}
+	return -1
+}
+
 func runSetup() {
 	if os.Geteuid() != 0 {
 		fmt.Fprintf(os.Stderr, "Error: setup requires root privileges\n")
@@ -128,7 +152,11 @@ func runSetup() {
 	}
 
 	fmt.Println()
-	fmt.Println("Users can now run 'limiter' without sudo for resource control.")
+	fmt.Println("⚠  IMPORTANT: For memory limits to work, users must restart their session:")
+	fmt.Println("   - Logout and login again (recommended)")
+	fmt.Println("   - Or run: sudo systemctl restart user@UID.service (may disconnect you)")
+	fmt.Println()
+	fmt.Println("Then verify with: limiter verify")
 }
 
 func runVerify() {
@@ -308,6 +336,7 @@ func runCommand(args []string) {
 			os.Exit(1)
 		}
 		sysArgs = append(sysArgs, "-p", fmt.Sprintf("MemoryMax=%d", limit))
+		sysArgs = append(sysArgs, "-p", "MemorySwapMax=0")
 		appliedLimits = append(appliedLimits, fmt.Sprintf("ram=%s", *memStr))
 	}
 
@@ -344,10 +373,33 @@ func runCommand(args []string) {
 	cmd := exec.Command("systemd-run", sysArgs...)
 
 	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 
-	if err := cmd.Run(); err != nil {
+	// Capture stderr to extract unit name
+	var stderrBuf bytes.Buffer
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = io.MultiWriter(os.Stderr, &stderrBuf)
+
+	// Record OOM kill count before running (for detecting OOM)
+	oomCountBefore := getOOMKillCount()
+
+	err := cmd.Run()
+
+	// Check if OOM kill count increased
+	oomCountAfter := getOOMKillCount()
+	wasOOMKilled := oomCountBefore >= 0 && oomCountAfter > oomCountBefore
+
+	if err != nil {
+		// Determine termination reason
+		if wasOOMKilled {
+			fmt.Fprintf(os.Stderr, "\nProcess killed: Out of memory (exceeded RAM limit)\n")
+		} else if *timeoutStr != "" {
+			// Check if it was a timeout (systemd sends SIGTERM for RuntimeMaxSec)
+			// We detect this by checking if the process was signaled
+			if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == -1 {
+				fmt.Fprintf(os.Stderr, "\nProcess killed: Timeout exceeded\n")
+			}
+		}
+
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}

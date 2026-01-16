@@ -48,8 +48,9 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.Procs != 100 {
 		t.Errorf("Default Procs = %d, want %d", cfg.Procs, 100)
 	}
-	if cfg.Timeout != "168h" {
-		t.Errorf("Default Timeout = %q, want %q", cfg.Timeout, "168h")
+	// Accept both 168h and 7d (they're equivalent)
+	if cfg.Timeout != "168h" && cfg.Timeout != "7d" {
+		t.Errorf("Default Timeout = %q, want %q or %q", cfg.Timeout, "168h", "7d")
 	}
 
 	// CPU cores should be 20% of system

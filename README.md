@@ -6,6 +6,22 @@
 
 A simple wrapper around `systemd-run` for resource-limited execution on Linux.
 
+## Requirements
+
+- Linux with **cgroups v2** (unified hierarchy)
+- systemd 243 or later
+- User session with systemd delegation enabled
+
+To check if you have cgroups v2:
+
+```sh
+stat -fc %T /sys/fs/cgroup/
+```
+
+Should output: `cgroup2fs`
+
+Most modern Linux distributions (Ubuntu 22.04+, Fedora 31+, Debian 11+) use cgroups v2 by default.
+
 ## Setup
 
 **One-time system configuration** (requires root):
@@ -17,6 +33,10 @@ sudo limiter setup
 This creates:
 - Systemd delegation config for resource control
 - Default limits at `/etc/limiter/limits.cfg`
+
+**Important**: After running setup, you must restart your user session for memory limits to work:
+- Logout and login again (recommended), OR
+- Run: `sudo systemctl restart user@$(id -u).service` (may disconnect your session)
 
 Verify it worked:
 
