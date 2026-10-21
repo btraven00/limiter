@@ -1,4 +1,4 @@
-module github.com/b/limiter
+module github.com/btraven00/limiter
 
 go 1.24.2
 
